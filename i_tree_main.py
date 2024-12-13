@@ -3,7 +3,7 @@ import random
 
 from i_tree import ITree
 from sqlite_utils import read_from_sqlite, get_all_ids
-from function_utils import generate_constraints, compute_vertices, check_function
+from function_utils import generate_constraints, check_function, FunctionProfiler
 from tqdm import tqdm  # Import the progress bar library
 import time  # Import time for measuring execution
 import sqlite3
@@ -43,7 +43,7 @@ if __name__ == '__main__':
         print(constraint)
 
     # Compute vertices for the initial domain
-    vertices = compute_vertices(constraints)
+    vertices = FunctionProfiler.compute_vertices(constraints)
     print(f"Computed vertices of the initial domain: {vertices}")
 
     # Collect IDs of records that satisfy the condition

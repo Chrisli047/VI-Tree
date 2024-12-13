@@ -1,4 +1,4 @@
-from function_utils import check_function, compute_vertices, merge_constraints, get_tight_constraints, \
+from function_utils import check_function, merge_constraints, get_tight_constraints, \
     check_smallest_intervals
 from simplex import check_constraints_feasibility
 from sqlite_utils import read_from_sqlite
