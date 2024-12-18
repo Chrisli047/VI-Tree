@@ -5,7 +5,7 @@ from copy import deepcopy
 import cdd
 import numpy as np
 
-from sqlite_utils import read_from_sqlite
+from sqlite_utils import read_from_sqlite, SQLiteReader
 
 
 def generate_constraints(n, var_min, var_max):
@@ -127,17 +127,20 @@ def merge_constraints(node_constraints, init_constraints, m, n, db_name, conn):
     for record_id in node_constraints:
         # Fetch record from the database
         if record_id < 0:
-            record = read_from_sqlite(m=m, n=n, db_name=db_name, record_id=-record_id, conn=conn)
+            # record = FunctionProfiler.read_from_sqlite(m=m, n=n, db_name=db_name, record_id=-record_id, conn=conn)
+            record = SQLiteReader.get_record_by_id(record_id)
             # Negate coefficients, keep constant unchanged
             record = tuple(-coeff for coeff in record[:-1]) + (record[-1],)  # Convert to a tuple
         else:
-            record = read_from_sqlite(m=m, n=n, db_name=db_name, record_id=record_id, conn=conn)
+            # record = FunctionProfiler.read_from_sqlite(m=m, n=n, db_name=db_name, record_id=record_id, conn=conn)
+            record = SQLiteReader.get_record_by_id(record_id)
             # Keep coefficients, negate constant
             record = tuple(record[:-1]) + (-record[-1],)  # Convert to a tuple
 
         # Append the modified record as a tuple to merged_constraints
         merged_constraints.append(record)
 
+    # print("merged_constraints: ", merged_constraints)
     return merged_constraints
 
 
@@ -227,9 +230,11 @@ class FunctionProfiler:
     total_time_compute_vertices = 0.0
     total_time_check_function = 0.0
     total_time_read_from_sqlite = 0.0
+    total_time_satisfies_all_constraints = 0.0  # New accumulator for satisfies_all_constraints
 
     @classmethod
     def compute_vertices(cls, constraints):
+        # print("constraints: ", constraints)
         start_time = time.time()
         try:
             rows = []
@@ -249,7 +254,8 @@ class FunctionProfiler:
             vertices = []
             for row in ext.array:
                 if row[0] == 1.0:  # This indicates a vertex
-                    vertex = [coord for coord in row[1:]]
+                    vertex = [round(coord) for coord in row[1:]]
+                    # vertex = [coord for coord in row[1:]]
                     vertices.append(vertex)
 
         except Exception as e:
@@ -260,33 +266,83 @@ class FunctionProfiler:
         cls.total_time_compute_vertices += elapsed_time
         return vertices
 
+    # @classmethod
+    # def check_function(cls, func, vertices, cache=None) -> bool:
+    #     # Convert vertices to a hashable type (tuple of tuples)
+    #     vertices_key = tuple(tuple(v) for v in vertices)
+    #     cache_key = (func, vertices_key)
+    #
+    #     # If a cache is provided, attempt to retrieve result from it
+    #     if cache is not None and cache_key in cache:
+    #         # print("Cache hit!")
+    #         # print("cache_key: ", cache_key)
+    #         # print("cache[cache_key]: ", cache[cache_key])
+    #         return cache[cache_key]
+    #     #
+    #     start_time = time.time()
+    #
+    #     *coefficients, constant = func
+    #     coefficients_array = np.array(coefficients)
+    #     vertices_array = np.array(vertices)  # shape: (num_vertices, d)
+    #     values = vertices_array.dot(coefficients_array) - constant
+    #
+    #     # Filter out values close to zero
+    #     mask = ~np.isclose(values, 0, atol=0.0001)
+    #     filtered_values = values[mask]
+    #
+    #     if filtered_values.size == 0:
+    #         result = False
+    #     else:
+    #         has_positive = np.any(filtered_values > 0)
+    #         has_negative = np.any(filtered_values < 0)
+    #         result = has_positive and has_negative
+    #
+    #     elapsed_time = time.time() - start_time
+    #     cls.total_time_check_function += elapsed_time
+    #
+    #     # If a cache is provided, store the result
+    #     if cache is not None:
+    #         cache[cache_key] = result
+    #
+    #     return result
+
     @classmethod
-    def check_function(cls, func, vertices, atol=0.0001) -> bool:
+    def check_function(cls, func, vertices, cache=None) -> bool:
+        """
+        Optimized check_function for integer coefficients and vertices.
+        """
+        # Precompute cache key using a hash of the inputs
+        vertices_key = hash(tuple(map(tuple, vertices)))  # Hash vertices for faster comparison
+        cache_key = (tuple(func), vertices_key)
+
+        # Cache check
+        if cache is not None and cache_key in cache:
+            return cache[cache_key]
+
         start_time = time.time()
 
+        # Separate coefficients and constant
         *coefficients, constant = func
 
-        # Convert input to NumPy arrays
-        coefficients_array = np.array(coefficients)
-        vertices_array = np.array(vertices)  # shape: (num_vertices, d)
+        # Direct computation (dot product) without NumPy
+        filtered_values = []
+        for vertex in vertices:
+            value = sum(c * v for c, v in zip(coefficients, vertex)) - constant
+            if value != 0:  # Avoid storing zeros
+                filtered_values.append(value)
 
-        # Compute AX - b for all vertices in one go
-        values = vertices_array.dot(coefficients_array) - constant
-
-        # Filter out values close to zero
-        mask = ~np.isclose(values, 0, atol=atol)
-        filtered_values = values[mask]
-
-        if filtered_values.size == 0:
-            result = False
-        else:
-            # Check if there's at least one positive and one negative
-            has_positive = np.any(filtered_values > 0)
-            has_negative = np.any(filtered_values < 0)
-            result = has_positive and has_negative
+        # Check for mixed signs
+        has_positive = any(v > 0 for v in filtered_values)
+        has_negative = any(v < 0 for v in filtered_values)
+        result = has_positive and has_negative
 
         elapsed_time = time.time() - start_time
         cls.total_time_check_function += elapsed_time
+
+        # Store result in cache
+        if cache is not None:
+            cache[cache_key] = result
+
         return result
 
     @classmethod
@@ -323,7 +379,29 @@ class FunctionProfiler:
         cls.total_time_read_from_sqlite += elapsed_time
         return result
 
+    @classmethod
+    def satisfies_all_constraints(cls, vertex, inequalities, atol=1e-9):
+        """
+        Check if the given vertex satisfies all linear inequalities of the form:
+        a1*x1 + a2*x2 + ... + c > 0
+        """
+        start_time = time.time()
 
+        vertex = tuple(vertex)  # Ensure it's a tuple for consistency
+
+        for constraint in inequalities:
+            *coefficients, c = constraint
+            lhs = sum(coef * v for coef, v in zip(coefficients, vertex)) + c
+
+            # Check lhs > 0 with a tolerance
+            if not (lhs > 0 + atol):
+                elapsed_time = time.time() - start_time
+                cls.total_time_satisfies_all_constraints += elapsed_time
+                return False
+
+        elapsed_time = time.time() - start_time
+        cls.total_time_satisfies_all_constraints += elapsed_time
+        return True
 # Usage Example:
 # FunctionProfiler.compute_vertices(constraints_list)
 # FunctionProfiler.check_function((1, 2, 3, 4), vertices_list)

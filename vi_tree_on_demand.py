@@ -1,6 +1,6 @@
 from function_utils import (check_function, FunctionProfiler, merge_constraints, get_tight_constraints,
                             check_smallest_intervals)
-from sqlite_utils import read_from_sqlite, SQLiteReader
+from sqlite_utils import read_from_sqlite
 from vertex_utils import create_lookup_table, process_new_vertices
 
 init_constraints = []  # Global variable to store initial constraints
@@ -20,7 +20,7 @@ class VITree:
     def __init__(self):
         self.root = None  # Initialize the tree with no root
 
-    def insert(self, record_id, constraints, vertices=None, m=None, n=None, db_name=None, conn=None, manager=None):
+    def insert(self, record_id, constraints, vertices=None, m=None, n=None, db_name=None, conn=None, manager=None, given_vertex=None):
         """
         Insert a node into the VI tree using a non-recursive method.
         Parameters:
@@ -52,16 +52,6 @@ class VITree:
             self.root.left_children = TreeNode(-record_id, [-record_id])
             self.root.right_children = TreeNode(record_id, [record_id])
 
-            left_merged_constraints = merge_constraints(self.root.left_children.constraints, init_constraints, m, n, db_name, conn)
-            # print(f"Left merged constraints: {left_merged_constraints}")
-            right_merged_constraints = merge_constraints(self.root.right_children.constraints, init_constraints, m, n, db_name, conn)
-            # print(f"Right merged constraints: {right_merged_constraints}")
-
-            self.root.left_children.vertices = FunctionProfiler.compute_vertices(left_merged_constraints)
-            # print(f"Left children vertices: {self.root.left_children.vertices}")
-            self.root.right_children.vertices = FunctionProfiler.compute_vertices(right_merged_constraints)
-            # print(f"Right children vertices: {self.root.right_children.vertices}")
-
             return
 
         # Use a stack to manage nodes for non-recursive traversal
@@ -75,53 +65,92 @@ class VITree:
             # print(len(cache))
             current = stack.pop()
             # Get the record from the database
-            # insert_record = FunctionProfiler.read_from_sqlite(m=m, n=n, db_name=db_name, record_id=record_id, conn=conn)
-            insert_record = SQLiteReader.get_record_by_id(record_id)
+            insert_record = FunctionProfiler.read_from_sqlite(m=m, n=n, db_name=db_name, record_id=record_id, conn=conn)
             # print(f"Processing record {record_id}: {insert_record}")
 
-            if not FunctionProfiler.check_function(insert_record, current.vertices, cache=cache):
-                continue  # Skip to the next iteration if not satisfied
+            # Check for vertices that should be skipped
+            # Skip nodes marked with the skip_flag
+            if current.skip_flag:
+                # print(f"Skipping record {current.intersection_id}: Marked as skippable.")
+                continue
 
-            if current.left_children is None and current.right_children is None:
-                left_merged_constraints = merge_constraints(current.constraints + [-record_id], init_constraints, m, n, db_name, conn)
-                # print(f"Left merged constraints: {left_merged_constraints}")
-                right_merged_constraints = merge_constraints(current.constraints + [record_id], init_constraints, m, n, db_name, conn)
-                # print(f"Right merged constraints: {right_merged_constraints}")
-
-                left_children_vertices = FunctionProfiler.compute_vertices(left_merged_constraints)
-                # print(f"Left children vertices: {left_children_vertices}")
-                right_children_vertices = FunctionProfiler.compute_vertices(right_merged_constraints)
-                # print(f"Right children vertices: {right_children_vertices}")
-
-                if len(left_children_vertices) <= 3 or len(right_children_vertices) <= 3:
+            if len(current.vertices) != 0:
+                # print(f"current vertices: {current.vertices}")
+                # print(insert_record)
+                if not FunctionProfiler.check_function(insert_record, current.vertices, atol=1e-4, cache=cache):
+                    continue  # Skip to the next iteration if not satisfied
+                # print("satisfied")
+                # Add left and right children to the stack for further traversal
+                if current.left_children is not None and current.right_children is not None:
+                    stack.append(current.left_children)
+                    stack.append(current.right_children)
                     continue
 
-                # print([current.vertices].count(left_children_vertices),[current.vertices].count(right_children_vertices))
-                if [current.vertices].count(left_children_vertices) > 0 or [current.vertices].count(right_children_vertices) > 0:
+                if current.left_children is None and current.right_children is None:
+                    current.left_children = TreeNode(
+                        -record_id,
+                        constraints=[-record_id] + current.constraints
+                    )
+                    current.right_children = TreeNode(
+                        record_id,
+                        constraints=[record_id] + current.constraints
+                    )
                     continue
-                # result = manager.process_vertex_set(current.vertices)
-                # if result:
-                #     # print(f"Skipping record {current.intersection_id}: Marked as skippable.")
+
+
+            # If current.vertices is empty
+            if not current.vertices:
+                # Merge node.constraints with init_constraints
+                merged_constraints = merge_constraints(current.constraints, init_constraints, m, n, db_name, conn)
+                if not FunctionProfiler.satisfies_all_constraints(given_vertex, merged_constraints):
+                    current.skip_flag = True
+                    continue
+
+                # Compute vertices
+                current.vertices = FunctionProfiler.compute_vertices(merged_constraints)
+                # print(f"Computed vertices for record {record_id}: {current.vertices}")
+                # current.constraints = get_tight_constraints(current.constraints, current.vertices, m, n, db_name, conn)
+                # print("current constraints: ", current.constraints)
+
+                # Check if the number of vertices is less than or equal to 2
+                if len(current.vertices) <= 2:
+                    # print(f"Skipping record {record_id}: Not enough vertices.")
+                    # print(f"Vertices: {current.vertices}")
+                    # print(f"Skipping record {record_id}: Not enough vertices.")
+                    current.skip_flag = True  # Mark this node to be skipped in future iterations
+                    current.not_enough_vertices = True
+                    continue
+
+
+                result = manager.process_vertex_set(current.vertices)
+                if result == True:
+                    # print(f"Skipping record {record_id}: Not enough vertices.")
+                    current.skip_flag = True
+                    continue
+
+                # print(f"Processed vertices for record {record_id}: {current.vertices}")
+
+                # if check_smallest_intervals(current.vertices, interval):
+                #     current.skip_flag = True
                 #     continue
 
 
-                current.left_children = TreeNode(
-                    -record_id,
-                    constraints=[-record_id] + current.constraints
-                )
+                # Check if the input record_id satisfies the condition
+                # if not check_function(insert_record, current.vertices, atol=1e-4):
+                #     continue  # Skip to the next iteration if not satisfied
 
-                current.right_children = TreeNode(
-                    record_id,
-                    constraints=[record_id] + current.constraints
-                )
+                # If the current node has no left child and no right child
+                if current.left_children is None and current.right_children is None:
+                    current.left_children = TreeNode(
+                        -record_id,
+                        constraints=[-record_id] + current.constraints
+                    )
+                    current.right_children = TreeNode(
+                        record_id,
+                        constraints=[record_id] + current.constraints
+                    )
+                    continue
 
-                current.left_children.vertices = left_children_vertices
-                current.right_children.vertices = right_children_vertices
-
-                continue
-
-            stack.append(current.left_children)
-            stack.append(current.right_children)
 
 
     def print_tree_by_layer(self, m, n, db_name, conn):

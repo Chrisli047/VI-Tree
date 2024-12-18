@@ -93,7 +93,7 @@ class VITree:
                 right_children_vertices = FunctionProfiler.compute_vertices(right_merged_constraints)
                 # print(f"Right children vertices: {right_children_vertices}")
 
-                if len(left_children_vertices) <= 3 or len(right_children_vertices) <= 3:
+                if len(left_children_vertices) <= 2 or len(right_children_vertices) <= 2:
                     continue
 
                 # print([current.vertices].count(left_children_vertices),[current.vertices].count(right_children_vertices))

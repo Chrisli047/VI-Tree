@@ -19,7 +19,7 @@ if __name__ == '__main__':
     parser.add_argument("n", type=int, help="Dimension of functions (n)")
     parser.add_argument("--db", type=str, default="test_intersections.db", help="Database file (default: intersections.db)")
     parser.add_argument("--var_min", type=float, default=0, help="Minimum value for variables (default: 0)")
-    parser.add_argument("--var_max", type=float, default=1000, help="Maximum value for variables (default: 10)")
+    parser.add_argument("--var_max", type=float, default=1, help="Maximum value for variables (default: 10)")
     args = parser.parse_args()
 
     m = args.m

@@ -83,3 +83,59 @@ def get_all_ids(m, n, db_name="test_intersections.db"):
         return []
     finally:
         conn.close()
+
+
+class SQLiteReader:
+    """
+    Class to read records from SQLite and store them in a class variable.
+    """
+    records = []  # Class variable to store all fetched records
+
+    @classmethod
+    def read_all_from_sqlite(cls, m, n, db_name="test_intersections.db", conn=None):
+        """
+        Fetch all records from the table and save them to the class variable.
+        Skips the index column.
+        """
+        close_conn = False
+        if conn is None:
+            conn = sqlite3.connect(db_name)
+            close_conn = True
+
+        cursor = conn.cursor()
+        table_name = f"intersections_m{m}_n{n}"
+
+        try:
+            cursor.execute(f"SELECT * FROM {table_name}")
+            cls.records = [tuple(row[1:]) for row in cursor.fetchall()]  # Skip index column
+            print(f"Records loaded from table {table_name}.")
+        except sqlite3.OperationalError as e:
+            print(f"Error reading table {table_name}: {e}")
+            cls.records = []  # Reset records if there's an error
+        finally:
+            if close_conn:
+                conn.close()
+
+    @classmethod
+    def get_records(cls):
+        """
+        Return the records stored in the class variable.
+        """
+        return cls.records
+
+    @classmethod
+    def get_record_by_id(cls, record_id):
+        """
+        Retrieve a record by ID (1-based index).
+        Returns None if the ID is out of range.
+        """
+        if not cls.records:
+            print("No records loaded. Call read_all_from_sqlite first.")
+            return None
+
+        try:
+            # SQLite IDs usually start from 1, so subtract 1 for list indexing
+            return cls.records[record_id - 1]
+        except IndexError:
+            print(f"Record with ID {record_id} does not exist.")
+            return None

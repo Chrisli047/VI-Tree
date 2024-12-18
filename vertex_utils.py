@@ -70,7 +70,7 @@ def process_new_vertices(lookup_table, new_vertices, interval):
 
 
 class VertexManager:
-    def __init__(self, precision, max_visits=2):
+    def __init__(self, precision, max_visits=1):
         """
         Initialize the VertexManager with a given precision and max visits threshold.
 
@@ -123,19 +123,23 @@ class VertexManager:
 
         # Append the rounded_set to the list
         self.rounded_sets_list.append(vertices)
+        # print(self.rounded_sets_list)
 
         # Count how many times this rounded_set has appeared
         current_count = self.rounded_sets_list.count(vertices)
 
         # If already visited max_visits times, return True (violation)
         if current_count > self.max_visits:
-            print(f"Visited {current_count} times: {vertices}")
+            # print(f"Visited {current_count} times: {vertices}")
             return True
-
-        # Check if the set satisfies the smallest interval condition
-        if check_smallest_intervals(vertices, self.precision):
-            return True  # Valid and recorded
         else:
-            # Violates the interval condition
-            # print(f"Smallest interval violation: {vertices}")
             return False
+
+        #
+        # # Check if the set satisfies the smallest interval condition
+        # if check_smallest_intervals(vertices, self.precision):
+        #     return True  # Valid and recorded
+        # else:
+        #     # Violates the interval condition
+        #     # print(f"Smallest interval violation: {vertices}")
+        #     return False
